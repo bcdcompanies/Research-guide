@@ -1530,6 +1530,8 @@ elif module == "Literature Search":
                             st.markdown(f"[Open Paper]({url})")
                         if pdf_url:
                             st.markdown(f"[Open Access PDF]({pdf_url})")
+                            if st.toggle("View PDF in Browser", key=f"view_pdf_{i}"):
+                                st.components.v1.iframe(pdf_url, height=600, scrolling=True)
                         if st.button("Save to Library", key=f"save_{i}"):
                             _added, _status = _add_to_library(entry)
                             if not _added:
@@ -1624,6 +1626,8 @@ elif module == "Literature Search":
                     with link_cols[1]:
                         if paper.get('PDF'):
                             st.markdown(f"[Open Access PDF]({paper.get('PDF')})")
+                            if st.toggle("View PDF in Browser", key=f"view_lib_pdf_{paper_id}"):
+                                st.components.v1.iframe(paper.get('PDF'), height=600, scrolling=True)
                     if st.checkbox("Remove this paper", key=f"remove_saved_{paper_id}"):
                         remove_ids.append(paper_id)
                     st.divider()
