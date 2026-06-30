@@ -17,6 +17,15 @@ from pathlib import Path
 # App Configuration
 st.set_page_config(page_title="Research Navigator", layout="wide")
 
+PDF_VIEWER_HEIGHT = 600
+
+
+def _safe_pdf_url(url):
+    """Return url only if it is a non-empty HTTPS link, else None."""
+    if url and isinstance(url, str) and url.lower().startswith("https://"):
+        return url
+    return None
+
 
 def _retry_get(url, *, params=None, headers=None, timeout=15, max_attempts=4):
     """GET with exponential back-off on 429 / transient network errors."""
@@ -1531,7 +1540,11 @@ elif module == "Literature Search":
                         if pdf_url:
                             st.markdown(f"[Open Access PDF]({pdf_url})")
                             if st.toggle("View PDF in Browser", key=f"view_pdf_{i}"):
-                                st.components.v1.iframe(pdf_url, height=600, scrolling=True)
+                                _safe = _safe_pdf_url(pdf_url)
+                                if _safe:
+                                    st.components.v1.iframe(_safe, height=PDF_VIEWER_HEIGHT, scrolling=True)
+                                else:
+                                    st.warning("PDF cannot be displayed inline (URL must use HTTPS).")
                         if st.button("Save to Library", key=f"save_{i}"):
                             _added, _status = _add_to_library(entry)
                             if not _added:
@@ -1627,7 +1640,11 @@ elif module == "Literature Search":
                         if paper.get('PDF'):
                             st.markdown(f"[Open Access PDF]({paper.get('PDF')})")
                             if st.toggle("View PDF in Browser", key=f"view_lib_pdf_{paper_id}"):
-                                st.components.v1.iframe(paper.get('PDF'), height=600, scrolling=True)
+                                _safe = _safe_pdf_url(paper.get('PDF'))
+                                if _safe:
+                                    st.components.v1.iframe(_safe, height=PDF_VIEWER_HEIGHT, scrolling=True)
+                                else:
+                                    st.warning("PDF cannot be displayed inline (URL must use HTTPS).")
                     if st.checkbox("Remove this paper", key=f"remove_saved_{paper_id}"):
                         remove_ids.append(paper_id)
                     st.divider()
