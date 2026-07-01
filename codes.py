@@ -1,3 +1,21 @@
+# -*- coding: utf-8 -*-
+# ---
+# jupyter:
+#   jupytext:
+#     cell_metadata_filter: -all
+#     custom_cell_magics: kql
+#     text_representation:
+#       extension: .py
+#       format_name: percent
+#       format_version: '1.3'
+#       jupytext_version: 1.11.2
+#   kernelspec:
+#     display_name: .conda
+#     language: python
+#     name: python3
+# ---
+
+# %%
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -14,10 +32,12 @@ import json
 import socket
 from pathlib import Path
 
+# %%
 # App Configuration
 st.set_page_config(page_title="Research Navigator", layout="wide")
 
 
+# %%
 def _retry_get(url, *, params=None, headers=None, timeout=15, max_attempts=4):
     """GET with exponential back-off on 429 / transient network errors."""
     for attempt in range(max_attempts):
@@ -34,6 +54,7 @@ def _retry_get(url, *, params=None, headers=None, timeout=15, max_attempts=4):
             time.sleep(2 ** attempt)
 
 
+# %%
 def _has_internet(timeout=2):
     """Fast connectivity probe used by offline-first UI controls."""
     try:
@@ -43,6 +64,7 @@ def _has_internet(timeout=2):
         return False
 
 
+# %%
 def _local_library_search(papers, query, year_start=None, year_end=None, sort_by='relevance'):
     """Search saved papers locally so the app remains useful without internet."""
     query_terms = [t for t in re.findall(r'\w+', (query or '').lower()) if t]
@@ -106,6 +128,52 @@ def _local_library_search(papers, query, year_start=None, year_end=None, sort_by
     return out
 
 
+# %%
+def _parse_pubmed_articles(root, *, source_label='PubMed', abstract_limit=600):
+    """Parse PubMed XML payload into unified paper dicts."""
+    results = []
+    for article in root.findall('.//PubmedArticle'):
+        try:
+            medline = article.find('MedlineCitation')
+            art = medline.find('Article')
+            title = (art.findtext('ArticleTitle') or '').rstrip('.')
+            author_list = art.find('AuthorList')
+            authors_out = []
+            if author_list is not None:
+                author_nodes = author_list.findall('Author')
+                for a in author_nodes[:4]:
+                    last = a.findtext('LastName', '')
+                    fore = a.findtext('ForeName', '') or a.findtext('Initials', '')
+                    if last:
+                        authors_out.append(f"{last} {fore}".strip())
+                if len(author_nodes) > 4:
+                    authors_out.append('et al.')
+
+            abstract_parts = art.findall('.//AbstractText')
+            abstract = ' '.join((at.text or '') for at in abstract_parts if at.text)
+            journal = (art.findtext('.//Title') or
+                       art.findtext('.//ISOAbbreviation') or 'N/A')
+            pub_date = medline.find('.//PubDate')
+            year = pub_date.findtext('Year', 'n.d.') if pub_date is not None else 'n.d.'
+            pmid = medline.findtext('PMID', '')
+
+            results.append({
+                'Title': title,
+                'Authors': ', '.join(authors_out),
+                'Abstract': abstract[:abstract_limit],
+                'URL': f'https://pubmed.ncbi.nlm.nih.gov/{pmid}/',
+                'Year': year,
+                'Venue': journal,
+                'Citations': 0,
+                'Source': source_label,
+                'PDF': '',
+            })
+        except Exception:
+            continue
+    return results
+
+
+# %%
 class ResearchAssistant:
     def __init__(self):
         self.api_url = "https://api.semanticscholar.org/graph/v1/paper/search"
@@ -168,38 +236,7 @@ class ResearchAssistant:
                         params={'db': 'pubmed', 'id': ','.join(ids), 'retmode': 'xml'},
                         timeout=20)
         root = ET.fromstring(r2.content)
-        results = []
-        for article in root.findall('.//PubmedArticle'):
-            try:
-                medline = article.find('MedlineCitation')
-                art = medline.find('Article')
-                title = (art.findtext('ArticleTitle') or '').rstrip('.')
-                author_list = art.find('AuthorList')
-                authors_out = []
-                if author_list is not None:
-                    for a in author_list.findall('Author')[:4]:
-                        last = a.findtext('LastName', '')
-                        fore = a.findtext('ForeName', '') or a.findtext('Initials', '')
-                        if last:
-                            authors_out.append(f"{last} {fore}".strip())
-                    if len(author_list.findall('Author')) > 4:
-                        authors_out.append('et al.')
-                abstract_parts = art.findall('.//AbstractText')
-                abstract = ' '.join((at.text or '') for at in abstract_parts if at.text)
-                journal = (art.findtext('.//Title') or
-                           art.findtext('.//ISOAbbreviation') or 'N/A')
-                pub_date = medline.find('.//PubDate')
-                year = pub_date.findtext('Year', 'n.d.') if pub_date is not None else 'n.d.'
-                pmid = medline.findtext('PMID', '')
-                results.append({
-                    'Title': title, 'Authors': ', '.join(authors_out),
-                    'Abstract': abstract[:600], 'URL': f'https://pubmed.ncbi.nlm.nih.gov/{pmid}/',
-                    'Year': year, 'Venue': journal, 'Citations': 0,
-                    'Source': 'PubMed', 'PDF': '',
-                })
-            except Exception:
-                continue
-        return results
+        return _parse_pubmed_articles(root, source_label='PubMed', abstract_limit=600)
 
     @st.cache_data(show_spinner=False)
     def search_europe_pmc(_self, query, limit=10, year_start=None, year_end=None):
@@ -414,39 +451,9 @@ class ResearchAssistant:
                         params={'db': 'pubmed', 'id': ','.join(ids), 'retmode': 'xml'},
                         timeout=20)
         root = ET.fromstring(r2.content)
-        results = []
-        for article in root.findall('.//PubmedArticle'):
-            try:
-                medline = article.find('MedlineCitation')
-                art = medline.find('Article')
-                title = (art.findtext('ArticleTitle') or '').rstrip('.')
-                author_list = art.find('AuthorList')
-                authors_out = []
-                if author_list is not None:
-                    for a in author_list.findall('Author')[:4]:
-                        last = a.findtext('LastName', '')
-                        fore = a.findtext('ForeName', '') or a.findtext('Initials', '')
-                        if last:
-                            authors_out.append(f"{last} {fore}".strip())
-                    if len(author_list.findall('Author')) > 4:
-                        authors_out.append('et al.')
-                abstract_parts = art.findall('.//AbstractText')
-                abstract = ' '.join((at.text or '') for at in abstract_parts if at.text)
-                journal = (art.findtext('.//Title') or
-                           art.findtext('.//ISOAbbreviation') or 'N/A')
-                pub_date = medline.find('.//PubDate')
-                year = pub_date.findtext('Year', 'n.d.') if pub_date is not None else 'n.d.'
-                pmid = medline.findtext('PMID', '')
-                results.append({
-                    'Title': title, 'Authors': ', '.join(authors_out),
-                    'Abstract': abstract[:800], 'URL': f'https://pubmed.ncbi.nlm.nih.gov/{pmid}/',
-                    'Year': year, 'Venue': journal, 'Citations': 0,
-                    'Source': 'Urology Journals', 'PDF': '',
-                })
-            except Exception:
-                continue
-        return results
+        return _parse_pubmed_articles(root, source_label='Urology Journals', abstract_limit=800)
 
+# %%
 # ── Citation formatting helpers ──────────────────────────────────────────────
 def format_reference(paper, style='APA 7th', number=None):
     """Return a formatted bibliographic reference string."""
@@ -483,6 +490,7 @@ def format_reference(paper, style='APA 7th', number=None):
     return ref
 
 
+# %%
 def in_text_cite(paper, style='APA 7th', number=None):
     """Return a formatted in-text citation string."""
     first_author = ((paper.get('Authors') or '').split(',')[0].strip()
@@ -493,6 +501,7 @@ def in_text_cite(paper, style='APA 7th', number=None):
     return f"({first_author}, {year})"
 
 
+# %%
 def evidence_badge(citations):
     """Return an evidence quality label based on citation count."""
     if citations is None:
@@ -508,6 +517,7 @@ def evidence_badge(citations):
     return "Emerging (<20 citations)"
 
 
+# %%
 def _paper_library_id(paper):
     """Create a stable library identifier for a paper record."""
     raw = "|".join([
@@ -519,9 +529,11 @@ def _paper_library_id(paper):
     return hashlib.sha1(raw.encode('utf-8')).hexdigest()[:12]
 
 
+# %%
 _LIBRARY_FILE = Path(__file__).resolve().with_name("saved_papers.json")
 
 
+# %%
 def _load_saved_papers():
     """Load the saved library from disk."""
     try:
@@ -542,6 +554,7 @@ def _load_saved_papers():
         return []
 
 
+# %%
 def _save_saved_papers(papers):
     """Persist the saved library to disk."""
     try:
@@ -552,6 +565,7 @@ def _save_saved_papers(papers):
         return False
 
 
+# %%
 def _library_session():
     """Return library list from session, initializing if needed."""
     if 'saved_papers' not in st.session_state:
@@ -559,6 +573,7 @@ def _library_session():
     return st.session_state.saved_papers
 
 
+# %%
 def _add_to_library(entry):
     """Add one entry to library and persist it."""
     lib = _library_session()
@@ -572,6 +587,20 @@ def _add_to_library(entry):
     return True, "session_only"
 
 
+# %%
+def _merge_papers_by_id(*paper_lists):
+    """Merge paper lists by stable Paper ID while preserving latest values."""
+    merged = {}
+    for papers in paper_lists:
+        for paper in papers or []:
+            if not isinstance(paper, dict):
+                continue
+            pid = paper.get('Paper ID') or _paper_library_id(paper)
+            merged[pid] = {**paper, 'Paper ID': pid}
+    return list(merged.values())
+
+
+# %%
 def _reload_library_from_disk():
     """Reload saved library from disk into session and return before/after counts."""
     before = len(st.session_state.get('saved_papers', []))
@@ -589,20 +618,23 @@ def _reload_library_from_disk():
     return before, after
 
 
+# %%
 # Initialize App
 assistant = ResearchAssistant()
 
+# %%
 if 'library_reload_notice' not in st.session_state:
     st.session_state.library_reload_notice = ''
 
+# %%
 # Load persistent library for all modules on app startup.
-if 'saved_papers' not in st.session_state:
-    st.session_state.saved_papers = _load_saved_papers()
-
 _disk_now = _load_saved_papers()
-if len(_disk_now) > len(st.session_state.saved_papers):
+if 'saved_papers' not in st.session_state:
+    st.session_state.saved_papers = _disk_now
+elif len(_disk_now) > len(st.session_state.saved_papers):
     st.session_state.saved_papers = _disk_now
 
+# %%
 st.title("Research Assistant App")
 st.sidebar.title("Navigation")
 module = st.sidebar.radio("Go to:", [
@@ -614,6 +646,7 @@ module = st.sidebar.radio("Go to:", [
     "Manuscript Drafter"
 ])
 
+# %%
 st.sidebar.divider()
 st.sidebar.subheader("API Settings")
 api_key = st.sidebar.text_input(
@@ -631,6 +664,7 @@ if st.sidebar.button("Clear Search Cache"):
     assistant.search_doaj.clear()
     st.sidebar.success("Cache cleared.")
 
+# %%
 st.sidebar.divider()
 st.sidebar.subheader("Citation Settings")
 if 'citation_style' not in st.session_state:
@@ -642,6 +676,7 @@ st.session_state.citation_style = st.sidebar.selectbox(
     help="Applied to in-text citations and the reference list in the manuscript."
 )
 
+# %%
 st.sidebar.divider()
 st.sidebar.subheader("Offline-First")
 if 'offline_mode' not in st.session_state:
@@ -662,6 +697,7 @@ elif _online_now:
 else:
     st.sidebar.warning("No network detected")
 
+# %%
 # --- Module 1: Conceptualization ---
 if module == "Conceptualization":
     st.header("Research Question Conceptualization")
@@ -960,8 +996,8 @@ if module == "Conceptualization":
         dv   = st.session_state.cq_dv
         pop  = st.session_state.cq_population or st.session_state.cq_affected
         comp = st.session_state.cq_comparison
-        time = st.session_state.cq_timeframe
-        tc   = f" within {time}" if time else ""
+        timeframe = st.session_state.cq_timeframe
+        tc   = f" within {timeframe}" if timeframe else ""
         cc   = f" compared to {comp}" if comp else ""
 
         q_v1 = f"What is the effect of {iv} on {dv} among {pop}?"
@@ -1161,11 +1197,12 @@ if module == "Conceptualization":
             # --- Paragraph 4: Variable Relationships ---
             mods_clause = f", moderated by {st.session_state.cq_moderators}," if st.session_state.cq_moderators else ""
             med_clause  = f" Potential mediating and confounding variables include {st.session_state.cq_mediators}." if st.session_state.cq_mediators else ""
+            theory_link = (st.session_state.cq_theory_link or '').strip()
             p4 = (
                 f"The present study conceptualises {iv} as the independent variable{mods_clause} "
                 f"with {dv} as the primary dependent outcome among {pop}{cc}{tc}. "
                 f"This relationship is anchored in {st.session_state.cq_theory}, "
-                f"which {st.session_state.cq_theory_link.strip() or 'provides the theoretical lens through which the study variables are examined'}."
+                f"which {theory_link or 'provides the theoretical lens through which the study variables are examined'}."
                 f"{med_clause}"
             )
 
@@ -1247,10 +1284,11 @@ if module == "Conceptualization":
         with bc2:
             if st.button("🔄 Start Over"):
                 for k in list(st.session_state.keys()):
-                    if k.startswith('cq_'):
+                    if isinstance(k, str) and k.startswith('cq_'):
                         del st.session_state[k]
                 st.rerun()
 
+# %%
 # --- Module 2: Literature Search ---
 elif module == "Literature Search":
     st.header("Literature Search")
@@ -1271,8 +1309,7 @@ elif module == "Literature Search":
 
     with st.expander("Library Diagnostics"):
         _session_count = len(st.session_state.get('saved_papers', []))
-        _disk_list = _load_saved_papers()
-        _disk_count = len(_disk_list)
+        _disk_count = len(_load_saved_papers())
         st.write(f"Session library count: {_session_count}")
         st.write(f"Disk library count: {_disk_count}")
         st.write(f"Library file: {_LIBRARY_FILE}")
@@ -1296,7 +1333,7 @@ elif module == "Literature Search":
                 if 'title' not in _col_map:
                     st.error("CSV must include a Title column.")
                 else:
-                    def _csv_get(row, key, default=''):
+                    def _csv_get(row, key, default=None):
                         col = _col_map.get(key)
                         if not col:
                             return default
@@ -1325,20 +1362,12 @@ elif module == "Literature Search":
                         _incoming.append(_entry)
 
                     _existing = _library_session()
-                    _by_id = {
-                        (p.get('Paper ID') or _paper_library_id(p)): {
-                            **p,
-                            'Paper ID': p.get('Paper ID') or _paper_library_id(p)
-                        }
+                    _existing_ids = {
+                        p.get('Paper ID') or _paper_library_id(p)
                         for p in _existing
                     }
-                    _added = 0
-                    for _p in _incoming:
-                        if _p['Paper ID'] not in _by_id:
-                            _by_id[_p['Paper ID']] = _p
-                            _added += 1
-
-                    _merged = list(_by_id.values())
+                    _merged = _merge_papers_by_id(_existing, _incoming)
+                    _added = sum(1 for _p in _merged if _p['Paper ID'] not in _existing_ids)
                     st.session_state.saved_papers = _merged
                     if _save_saved_papers(_merged):
                         st.session_state.library_reload_notice = (
@@ -1404,7 +1433,21 @@ elif module == "Literature Search":
                 })
             return out
 
-    if st.button("Search", type="primary") and query:
+    if 'last_search_results' not in st.session_state:
+        st.session_state.last_search_results = []
+    if 'last_search_selected_sources' not in st.session_state:
+        st.session_state.last_search_selected_sources = []
+    if 'last_search_source_errors' not in st.session_state:
+        st.session_state.last_search_source_errors = {}
+    if 'last_search_source_counts' not in st.session_state:
+        st.session_state.last_search_source_counts = {}
+    if 'last_search_query' not in st.session_state:
+        st.session_state.last_search_query = ""
+    if 'last_search_attempted' not in st.session_state:
+        st.session_state.last_search_attempted = False
+
+    search_clicked = st.button("Search", type="primary")
+    if search_clicked and query:
         selected = st.session_state.search_sources or ["Semantic Scholar"]
 
         if st.session_state.get('offline_mode'):
@@ -1418,7 +1461,6 @@ elif module == "Literature Search":
             selected = ["Saved Library"]
             source_errors = {}
             source_counts = {'Saved Library': len(deduped)}
-            st.info("Results per source — **Saved Library**: " + str(len(deduped)))
         else:
 
             _source_fns = {
@@ -1475,8 +1517,24 @@ elif module == "Literature Search":
                     reverse=True,
                 )
 
-            # Source summary
-            summary_parts = [f"**{s}**: {source_counts.get(s, 0)}" for s in selected]
+        st.session_state.last_search_results = deduped
+        st.session_state.last_search_selected_sources = selected
+        st.session_state.last_search_source_errors = source_errors
+        st.session_state.last_search_source_counts = source_counts
+        st.session_state.last_search_query = query
+        st.session_state.last_search_attempted = True
+        st.session_state.bulk_save_selection = []
+
+    last_query = st.session_state.get('last_search_query', '')
+    deduped = st.session_state.get('last_search_results', [])
+    selected = st.session_state.get('last_search_selected_sources', [])
+    source_errors = st.session_state.get('last_search_source_errors', {})
+    source_counts = st.session_state.get('last_search_source_counts', {})
+    search_attempted = st.session_state.get('last_search_attempted', False)
+
+    if search_attempted:
+        summary_parts = [f"**{s}**: {source_counts.get(s, 0)}" for s in selected]
+        if summary_parts:
             st.info("Results per source — " + " | ".join(summary_parts))
 
         if source_errors:
@@ -1486,7 +1544,7 @@ elif module == "Literature Search":
 
         if deduped:
             st.success(
-                f"**{len(deduped)}** unique result(s) across {len(selected)} source(s) for **{query}**"
+                f"**{len(deduped)}** unique result(s) across {len(selected)} source(s) for **{last_query}**"
             )
             rows = []
             _bulk_save_options = {}
@@ -1591,7 +1649,7 @@ elif module == "Literature Search":
             st.download_button(
                 "Export Results to CSV",
                 data=df_results.to_csv(index=False).encode('utf-8-sig'),
-                file_name=f"search_{query.replace(' ', '_')}.csv",
+                file_name=f"search_{last_query.replace(' ', '_')}.csv",
                 mime="text/csv"
             )
         else:
@@ -1647,6 +1705,7 @@ elif module == "Literature Search":
                 st.warning("Cleared in session, but failed to persist to disk.")
             st.rerun()
 
+# %%
 # --- Module: Literature Review ---
 elif module == "Literature Review":
     st.header("Literature Review Synthesizer")
@@ -1781,12 +1840,8 @@ elif module == "Literature Review":
 
         # Keep session and disk library views in sync so recently saved papers
         # are consistently available in Literature Review.
-        _merged = {}
-        for _p in _lr_saved + _disk_saved:
-            _pid = _p.get('Paper ID') or _paper_library_id(_p)
-            _merged[_pid] = {**_p, 'Paper ID': _pid}
-        if _merged:
-            _lr_saved = list(_merged.values())
+        _lr_saved = _merge_papers_by_id(_lr_saved, _disk_saved)
+        if _lr_saved:
             st.session_state.saved_papers = _lr_saved
 
         if st.button("Refresh Library", key='lr_refresh_library'):
@@ -1901,7 +1956,7 @@ elif module == "Literature Review":
 
     st.divider()
 
-    _btn_disabled = not (lr_papers and lr_rq.strip())
+    _btn_disabled = not (lr_papers and (lr_rq or '').strip())
     if _btn_disabled:
         st.warning(
             "⚠️ To analyze, add articles (use tabs above) and enter a research question above."
@@ -2132,6 +2187,7 @@ elif module == "Literature Review":
                         "Navigate there to review and edit."
                     )
 
+# %%
 # --- Module 3: Methodology & Stats ---
 elif module == "Methodology & Stats":
     st.header("Statistical Tool Design")
@@ -2498,6 +2554,7 @@ elif module == "Methodology & Stats":
         st.dataframe(pd.DataFrame(selected_guide['table']), width='stretch', hide_index=True)
         st.info(selected_guide['note'])
 
+# %%
 # --- Module 4: Data Viz & Tables ---
 elif module == "Data Viz & Tables":
     st.header("Statistical Tables & Figures")
@@ -2511,8 +2568,12 @@ elif module == "Data Viz & Tables":
         target_col = st.selectbox("Select Column", df.columns)
         st.bar_chart(df[target_col].value_counts())
 
+# %%
 # --- Module 5: Manuscript Drafter ---
-elif module == "Manuscript Drafter":
+from ast import Module
+
+
+if Module == "Manuscript Drafter":
     st.header("Draft Manuscript Tool")
 
     ms_tab1, ms_tab2, ms_tab3 = st.tabs([
@@ -2890,7 +2951,9 @@ elif module == "Manuscript Drafter":
 
                 # Append to discussion
                 if st.button("Append to Discussion Section"):
-                    st.session_state.ms_discussion += f"\n\n{draft_para}"
+                    st.session_state.ms_discussion = (
+                        (st.session_state.get('ms_discussion') or '') + f"\n\n{draft_para}"
+                    )
                     st.success("Appended to Discussion. Go to Section 7 to edit.")
 
             st.divider()
@@ -3000,3 +3063,4 @@ elif module == "Manuscript Drafter":
                 mime="text/plain",
                 disabled=not plain.strip()
             )
+
